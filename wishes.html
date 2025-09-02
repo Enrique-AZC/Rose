@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Rosa</title>
+  <style>
+    :root{
+      --bg-0:#050406; --bg-1:#0a0a0f; --fg:#f3f3f2; --muted:#b9b9b9; --accent:#e43a5f;
+    }
+    html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 50% 30%, var(--bg-1) 0%, var(--bg-0) 60%);}
+    body{font-family:"Cormorant Garamond",ui-serif,Georgia,serif;color:var(--fg);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+    .layer{position:fixed;inset:0;pointer-events:none}
+    #ui{display:grid;grid-template-rows:1fr auto auto;align-items:end;padding:clamp(12px,4vmin,32px)}
+    #title{justify-self:center;align-self:start;letter-spacing:.04em;font-size:clamp(18px,1.6vmax,24px);color:var(--muted);opacity:.85}
+    #copy{justify-self:center;text-align:center;max-width:min(860px, 92vw);font-size:clamp(20px,2.4vmax,32px);line-height:1.55;letter-spacing:.01em;
+      filter:drop-shadow(0 0 24px rgba(255,255,255,.08));opacity:0;transition:opacity 900ms ease;}
+    #copy.show{opacity:1}
+    #bar{height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);width:0%;transition:width .25s ease}
+    #controls{display:flex;gap:16px;justify-content:center;padding-top:18px;user-select:none}
+    .btn{pointer-events:auto;background:transparent;color:var(--fg);border:1px solid rgba(255,255,255,.18);padding:10px 20px;border-radius:999px;
+      font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;font-weight:500;letter-spacing:.03em;font-size:14px;
+      transition:background .25s ease,border-color .25s ease,transform .2s ease}
+    .btn:hover{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.28);transform:translateY(-1px)}
+    .btn:active{transform:translateY(0) scale(.99)}
+    .muted{opacity:.6}
+    #start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:rgba(0,0,0,.78);
+      backdrop-filter:saturate(120%) blur(8px);transition:opacity 500ms ease,visibility 500ms ease;z-index:10}
+    #start h1{margin:0;font-size:clamp(22px,2.6vmax,34px);font-weight:600;letter-spacing:.03em}
+    #subtitle{color:var(--muted);font-size:clamp(12px,1.6vmax,16px)}
+    #progress{width:min(360px,72vw);height:2px;background:rgba(255,255,255,.12);overflow:hidden;border-radius:999px}
+    #barInner{height:100%;width:0%;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.75),rgba(255,255,255,.05));transition:width .2s ease}
+    #start.hide{opacity:0;visibility:hidden}
+    #legend{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);color:var(--muted);font-size:12px;letter-spacing:.04em;opacity:.7}
+    canvas{cursor:grab} canvas:active{cursor:grabbing}
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="layer" id="ui">
+    <div id="title">Rosa</div>
+    <div id="copy"></div>
+    <div>
+      <div id="bar"></div>
+      <div id="controls">
+        <button id="nextBtn" class="btn muted">Siguiente texto</button>
+      </div>
+    </div>
+  </div>
+  <div id="start">
+    <h1>Una rosa para ti</h1>
+    <div id="subtitle">Haz clic para comenzar</div>
+    <div id="progress"><div id="barInner"></div></div>
+  </div>
+
+<script type="module">
+import * as THREE from "https://esm.sh/three@0.160.0";
+import { OrbitControls } from "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "https://esm.sh/three@0.160.0/examples/jsm/environments/RoomEnvironment.js";
+import { EffectComposer } from "https://esm.sh/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "https://esm.sh/three@0.160.0/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "https://esm.sh/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { BokehPass } from "https://esm.sh/three@0.160.0/examples/jsm/postprocessing/BokehPass.js";
+
+const LINES = [
+  "Cada día encuentro nuevas razones para admirarte.",
+  "Conviertes lo cotidiano en extraordinario.",
+  "Cuatro meses, y una vida juntos de experiencias.",
+  "Provienes de las estrellas, y como una estrella iluminas a los demás.",
+  "Por más cazas del tesoro contigo.",
+  "Por el castillo que construimos juntos.",
+  "Por una vida entera en la que lo único que quiero es hacerte sonreir.",
+  "Eres mi mejor amiga, mi familia, el amor de mi vida.",
+  "Eres mi inspiración.",
+  "Solo espero vivir nuestros 102 años haciéndote la mujer más feliz."
+];
+
+const clamp = (v,a,b)=>Math.min(b,Math.max(a,v));
+
+class RoseApp{
+  constructor(){
+    this.copyEl = document.getElementById('copy');
+    this.startEl = document.getElementById('start');
+    this.barEl = document.getElementById('barInner');
+    this.nextBtn = document.getElementById('nextBtn');
+    this.lineIndex=0; this.uniforms=[];
+    this.#initThree();
+    this.#initUI();
+    this.#loadModel();
+    this.#animate();
+  }
+
+  #initThree(){
+    this.scene = new THREE.Scene();
+    this.renderer = new THREE.WebGLRenderer({antialias:true});
+    this.renderer.setSize(innerWidth,innerHeight);
+    this.renderer.setPixelRatio(clamp(devicePixelRatio,1,2));
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(this.renderer.domElement);
+
+    this.camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
+
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping=true; 
+    this.controls.enablePan=false;
+    this.controls.autoRotate=true; 
+    this.controls.autoRotateSpeed=0.35;
+
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(),0.1).texture;
+
+    this.scene.add(new THREE.AmbientLight(0xffffff,0.55));
+    const key=new THREE.DirectionalLight(0xffffff,1.0); 
+    key.position.set(2,3,2); 
+    this.scene.add(key);
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene,this.camera));
+    this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),0.35,0.6,0.9));
+    this.bokeh = new BokehPass(this.scene,this.camera,{
+      focus:1.2, aperture:0.00022, maxblur:0.012, width:innerWidth,height:innerHeight
+    });
+    this.composer.addPass(this.bokeh);
+
+    addEventListener('resize',()=>this.#onResize());
+  }
+
+  #initUI(){
+    this.nextBtn.onclick=()=>this.nextLine();
+    addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight' || e.key===' ' || e.key==='Enter'){ e.preventDefault(); this.nextLine(); }
+    });
+    this.startEl.onclick=()=>{
+      this.startEl.classList.add('hide');
+      this.nextLine();
+    };
+  }
+
+  // Enfocar tercio superior (pétalos)
+  #frameTop(box){
+    const topFrom = 0.62; // ajusta si tus pétalos están más arriba/abajo
+    const min = box.min.clone(), max = box.max.clone();
+    const size = new THREE.Vector3().subVectors(max,min);
+    const roiMin = new THREE.Vector3(min.x, min.y + size.y*topFrom, min.z);
+    const roiBox = new THREE.Box3(roiMin, max);
+    const roiSize = new THREE.Vector3(); roiBox.getSize(roiSize);
+    const roiCenter = new THREE.Vector3(); roiBox.getCenter(roiCenter);
+
+    const fov = this.camera.fov * Math.PI/180;
+    const aspect = this.camera.aspect;
+    const halfH = roiSize.y/2, halfW = roiSize.x/2;
+    let distV = halfH / Math.tan(fov/2);
+    let distH = (halfW / Math.tan(fov/2)) / aspect;
+    let dist  = Math.max(distV, distH) * 1.15;
+
+    this.camera.position.set(0, roiCenter.y, dist);
+    this.controls.target.copy(roiCenter);
+    this.controls.update();
+
+    const camToTarget = this.camera.position.distanceTo(roiCenter);
+    if (this.bokeh?.materialBokeh?.uniforms?.focus){
+      this.bokeh.materialBokeh.uniforms.focus.value = camToTarget;
+    }
+  }
+
+  #loadModel(){
+    const loader=new GLTFLoader();
+    loader.load(
+      "./scene.gltf",
+      (gltf)=>{
+        this.rose=gltf.scene; 
+        this.scene.add(this.rose);
+
+        // Centrar y escalar
+        const box=new THREE.Box3().setFromObject(this.rose);
+        const size=new THREE.Vector3(); box.getSize(size);
+        const center=new THREE.Vector3(); box.getCenter(center);
+        this.rose.position.sub(center);
+
+        const targetHeight = 2.2;
+        const scale=targetHeight/size.y; 
+        this.rose.scale.setScalar(scale);
+
+        // Recalcular y encuadrar pétalos
+        this.boxScaled = new THREE.Box3().setFromObject(this.rose);
+        this.#frameTop(this.boxScaled);
+
+        // Shader tweak: rosa SIEMPRE ABIERTA (uOpen=1.0)
+        const meshes=[]; 
+        this.rose.traverse(o=>{ if(o.isMesh) meshes.push(o); });
+        for(const m of meshes){
+          const mat=(Array.isArray(m.material)?m.material[0]:m.material).clone();
+          const bbox=new THREE.Box3().setFromObject(m);
+          const minY=bbox.min.y,maxY=bbox.max.y;
+          mat.onBeforeCompile=(shader)=>{
+            shader.uniforms.uOpen={value:0.0}; // ← siempre abierta
+            shader.uniforms.uMinY={value:minY};
+            shader.uniforms.uMaxY={value:maxY};
+            shader.uniforms.uCurl={value:0.35};
+            shader.uniforms.uAmp={value:0.35};
+            shader.vertexShader=shader.vertexShader
+              .replace('#include <common>',`
+                #include <common>
+                uniform float uOpen,uMinY,uMaxY,uCurl,uAmp;
+                float remap01(float x,float a,float b){return clamp((x-a)/max(1e-5,(b-a)),0.,1.);}
+              `)
+              .replace('#include <begin_vertex>',`
+                #include <begin_vertex>
+                float h=remap01(position.y,uMinY,uMaxY);
+                float w=smoothstep(0.2,1.0,h);
+                transformed+=normal*uAmp*uOpen*(0.25+0.75*w);
+                float ang=uCurl*uOpen*(0.6+0.4*(1.0-w));
+                float s=sin(ang),c=cos(ang);
+                transformed.xz=mat2(c,-s,s,c)*transformed.xz;
+              `);
+            mat.userData.shader=shader;
+          };
+          m.material=mat;
+        }
+      },
+      xhr=>{
+        if(xhr.total) this.barEl.style.width=`${(xhr.loaded/xhr.total*100)|0}%`;
+      }
+    );
+  }
+
+  nextLine(){
+    this.copyEl.classList.remove('show');
+    const line=LINES[this.lineIndex++%LINES.length];
+    setTimeout(()=>{this.copyEl.textContent=line;this.copyEl.classList.add('show');},140);
+  }
+
+  #animate(){
+    const render=()=>{
+      this.controls.update(); 
+      this.composer.render();
+      requestAnimationFrame(render);
+    }; render();
+  }
+
+  #onResize(){
+    const w=innerWidth,h=innerHeight;
+    this.camera.aspect=w/h; this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w,h); this.composer.setSize(w,h);
+    if(this.boxScaled) this.#frameTop(this.boxScaled);
+  }
+}
+
+new RoseApp();
+</script>
+</body>
+</html>
